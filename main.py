@@ -1,10 +1,9 @@
 import tensorflow as tf
 from tensorflow.python.layers import core as layers_core
 
+
 class BaseModel(object):
-
     def __init__(self, X, Y, sequence_length, vocab, scope=None):
-
         vocab_size = len(vocab)
         embedding_size = 50
         self.num_units = 50
@@ -30,7 +29,8 @@ class BaseModel(object):
         with tf.variable_scope("encoder") as scope:
             encoder_emb_inp = tf.nn.embedding_lookup(self.embedding, params[0])
             grucell = tf.contrib.rnn.GRUCell(self.num_units)
-            encoder_outputs, encoder_state = tf.nn.dynamic_rnn(grucell, encoder_emb_inp, dtype=tf.float32,sequence_length=self.sequence_length)
+            encoder_outputs, encoder_state = tf.nn.dynamic_rnn(grucell, encoder_emb_inp, dtype=tf.float32,
+                                                               sequence_length=self.sequence_length)
 
         return encoder_outputs, encoder_state
 
