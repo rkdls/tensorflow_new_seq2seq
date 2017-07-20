@@ -25,6 +25,11 @@ class BaseModel(object):
         self.sequence_length = sequence_length
         self.beam_width = 5
         self.batch_size = batch_size
+        self.learning_rate = 0.01
+        self.max_gradient_norm = 5.0
+        self.colocate_gradients_with_ops = True
+        self.time_major = False
+        self.mode = tf.contrib.learn.ModeKeys.TRAIN
 
         with tf.variable_scope(scope or 'build_network'):
             with tf.variable_scope("decoder/output_projection"):
@@ -37,7 +42,28 @@ class BaseModel(object):
         params = (X, Y)
         res = self.build_graph(params, scope=scope)
 
+        self.train_loss = res[1]
+        self.global_step = tf.Variable(0, trainable=False)
 
+        train_params = tf.trainable_variables()
+        self.learning_rate = tf.constant(self.learning_rate)
+        opt = tf.train.AdamOptimizer(self.learning_rate)
+
+        gradients = tf.gradients(
+            self.train_loss,
+            train_params,
+            colocate_gradients_with_ops=self.colocate_gradients_with_ops)
+
+        clipped_gradients, gradient_norm = tf.clip_by_global_norm(
+            gradients, self.max_gradient_norm)
+        self.update = opt.apply_gradients(
+            zip(clipped_gradients, params), global_step=self.global_step)
+
+        self.train_summary = tf.summary.merge([
+            tf.summary.scalar("lr", self.learning_rate),
+            tf.summary.scalar("train_loss", self.train_loss),
+        ])
+        self.saver = tf.train.Saver(tf.global_variables())
 
     def build_graph(self, params, scope):
         with tf.variable_scope(scope or "dynamic_seq2seq", dtype=tf.float32):
@@ -105,7 +131,6 @@ class BaseModel(object):
                 if self.time_major:
                     target_input = tf.transpose(target_input)
 
-
                 # decoder_emp_inp: [max_time, batch_size, num_units]
                 decoder_emb_inp = tf.nn.embedding_lookup(self.embedding, target_input)
                 helper = tf.contrib.seq2seq.TrainingHelper(decoder_emb_inp, self.sequence_length,
@@ -126,7 +151,6 @@ class BaseModel(object):
 
         num_units = self.num_units
         beam_width = self.beam_width
-
 
         if self.time_major:
             memory = tf.transpose(encoder_outputs)
@@ -159,11 +183,12 @@ class BaseModel(object):
             alignment_history=alignment_history,
             name="attention")
 
-        decoder_initial_state = cell.zero_state(batch_size, tf.flaot32)
+        decoder_initial_state = cell.zero_state(batch_size, tf.float32)
 
         return cell, decoder_initial_state
 
 
 if __name__ == '__main__':
-    tf.contrib.learn.ModeKeys.validate()
-    BaseModel()
+
+    
+    BaseModel(X, Y, sequence_length, vocab, batch_size)
