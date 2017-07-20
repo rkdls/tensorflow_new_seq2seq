@@ -37,6 +37,8 @@ class BaseModel(object):
         params = (X, Y)
         res = self.build_graph(params, scope=scope)
 
+
+
     def build_graph(self, params, scope):
         with tf.variable_scope(scope or "dynamic_seq2seq", dtype=tf.float32):
             encoder_outputs, encoder_state = self._build_encoder(params)
@@ -45,9 +47,12 @@ class BaseModel(object):
             if self.mode != tf.contrib.learn.ModeKeys.INFER:
                 loss = self._compute_loss(logits, params)
 
+            return logits, loss, final_context_state, sample_id
+
     def _compute_loss(self, logits, params):
         target_output = params[1]
-        target_output = tf.transpose(target_output)
+        if self.time_major:
+            target_output = tf.transpose(target_output)
 
         max_time = self.get_max_time(target_output)
 
@@ -56,16 +61,28 @@ class BaseModel(object):
 
         target_weights = tf.sequence_mask(self.sequence_length, max_time, dtype=logits.dtype)
 
+        if self.time_major:
+            target_weights = tf.transpose(target_weights)
+        loss = tf.reduce_sum(crossent * target_weights) / tf.to_float(self.batch_size)
+
+        return loss
 
     def get_max_time(self, tensor):
         time_axis = 1
         return tensor.shape[time_axis].value or tf.shape(tensor)[time_axis]
 
     def _build_encoder(self, params):
+
+        source = params[0]
+
+        if self.time_major:
+            source = tf.transpose(source)
+
         with tf.variable_scope("encoder") as scope:
-            encoder_emb_inp = tf.nn.embedding_lookup(self.embedding, params[0])
+            encoder_emb_inp = tf.nn.embedding_lookup(self.embedding, source)
             grucell = tf.contrib.rnn.GRUCell(self.num_units)
             encoder_outputs, encoder_state = tf.nn.dynamic_rnn(grucell, encoder_emb_inp, dtype=tf.float32,
+                                                               time_major=self.time_major,
                                                                sequence_length=self.sequence_length)
 
         return encoder_outputs, encoder_state
@@ -82,17 +99,21 @@ class BaseModel(object):
             cell, decoder_initial_state = self._build_decoder_cell(encoder_outputs, encoder_state)
             if self.mode != tf.contrib.learn.ModeKeys.INFER:
                 # target_input = (batch_size, max_time)
+
+
                 target_input = params[1]
-                target_input = tf.transpose(target_input)
+                if self.time_major:
+                    target_input = tf.transpose(target_input)
+
 
                 # decoder_emp_inp: [max_time, batch_size, num_units]
                 decoder_emb_inp = tf.nn.embedding_lookup(self.embedding, target_input)
                 helper = tf.contrib.seq2seq.TrainingHelper(decoder_emb_inp, self.sequence_length,
-                                                           time_major=True)
+                                                           time_major=self.time_major)
                 my_decoder = tf.contrib.seq2seq.BasicDecoder(cell, helper, decoder_initial_state)
                 outputs, final_context_state, _ = tf.contrib.seq2seq.dynamic_decode(
                     my_decoder,
-                    output_time_major=True,
+                    output_time_major=self.time_major,
                     swap_memory=True,
                     scope=decoder_scope)
 
@@ -106,7 +127,12 @@ class BaseModel(object):
         num_units = self.num_units
         beam_width = self.beam_width
 
-        memory = encoder_outputs
+
+        if self.time_major:
+            memory = tf.transpose(encoder_outputs)
+        else:
+            memory = encoder_outputs
+
         memory = tf.contrib.seq2seq.tile_batch(memory, multiplier=beam_width)
 
         if self.mode == 'inference' and beam_width > 0:
